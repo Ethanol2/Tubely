@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -36,6 +38,17 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	// Upload logic
 
+	mD, err := cfg.db.GetVideo(videoID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error fetching data for this video IO", err)
+		return
+	}
+
+	if userID != mD.UserID {
+		respondWithError(w, http.StatusUnauthorized, "User is not the owner of the video", err)
+		return
+	}
+
 	err = r.ParseMultipartForm(MAX_MEMORY)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't parse multipart form", err)
@@ -49,34 +62,35 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer fileBody.Close()
 
 	fileType := header.Header.Get("Content-Type")
-	file, err := io.ReadAll(fileBody)
+
+	mimeType, _, err := mime.ParseMediaType(fileType)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error reading file content", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't parse content type", err)
+		return
+	}
+	if mimeType != "image/jpeg" && mimeType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Thumbnails can only be jpg or png", err)
 		return
 	}
 
-	mD, err := cfg.db.GetVideo(videoID)
+	extensions, _ := mime.ExtensionsByType(fileType)
+
+	fileName := fmt.Sprintf("%s%s", videoID, extensions[0])
+	path := filepath.Join("assets/", fileName)
+	asset, err := os.Create(path)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error fetching data for this video IO", err)
+		respondWithError(w, http.StatusInternalServerError, "Error creating thumbnail asset on disk", err)
 		return
 	}
 
-	if userID != mD.UserID {
-		respondWithError(w, http.StatusUnauthorized, "User is not the owner of the video", err)
+	_, err = io.Copy(asset, fileBody)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error writing thumbnail to asset", err)
 		return
 	}
 
-	// videoThumbnails[videoID] = thumbnail{
-	// 	data:      file,
-	// 	mediaType: fileType,
-	// }
-
-	tnData := base64.StdEncoding.EncodeToString(file)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", fileType, tnData)
-
-	//tnURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
-
-	mD.ThumbnailURL = &dataURL
+	fileUrl := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
+	mD.ThumbnailURL = &fileUrl
 
 	err = cfg.db.UpdateVideo(mD)
 	if err != nil {
