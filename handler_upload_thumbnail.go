@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,15 +41,15 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Couldn't parse multipart form", err)
 		return
 	}
-	fileMultipart, header, err := r.FormFile("thumbnail")
+	fileBody, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
 		return
 	}
-	defer fileMultipart.Close()
+	defer fileBody.Close()
 
 	fileType := header.Header.Get("Content-Type")
-	file, err := io.ReadAll(fileMultipart)
+	file, err := io.ReadAll(fileBody)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error reading file content", err)
 		return
@@ -65,13 +66,17 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data:      file,
-		mediaType: fileType,
-	}
+	// videoThumbnails[videoID] = thumbnail{
+	// 	data:      file,
+	// 	mediaType: fileType,
+	// }
 
-	tnURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
-	mD.ThumbnailURL = &tnURL
+	tnData := base64.StdEncoding.EncodeToString(file)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", fileType, tnData)
+
+	//tnURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
+
+	mD.ThumbnailURL = &dataURL
 
 	err = cfg.db.UpdateVideo(mD)
 	if err != nil {
