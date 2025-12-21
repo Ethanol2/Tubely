@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -8,48 +10,16 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/google/uuid"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
-const MAX_MEMORY = 10 << 20
+const MAX_THUMBNAIL_MEMORY = 10 << 20
 
-func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
-		return
-	}
+func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request, metadata database.Video) {
 
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
-		return
-	}
+	fmt.Println("uploading thumbnail for video", metadata.ID, "by user", metadata.UserID)
 
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
-		return
-	}
-
-	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
-
-	// Upload logic
-
-	mD, err := cfg.db.GetVideo(videoID)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error fetching data for this video IO", err)
-		return
-	}
-
-	if userID != mD.UserID {
-		respondWithError(w, http.StatusUnauthorized, "User is not the owner of the video", err)
-		return
-	}
-
-	err = r.ParseMultipartForm(MAX_MEMORY)
+	err := r.ParseMultipartForm(MAX_THUMBNAIL_MEMORY)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't parse multipart form", err)
 		return
@@ -75,7 +45,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	extensions, _ := mime.ExtensionsByType(fileType)
 
-	fileName := fmt.Sprintf("%s%s", videoID, extensions[0])
+	rNum := make([]byte, 32)
+	rand.Read(rNum)
+
+	fileName := fmt.Sprintf("%s%s", base64.RawURLEncoding.EncodeToString(rNum), extensions[0])
 	path := filepath.Join("assets/", fileName)
 	asset, err := os.Create(path)
 	if err != nil {
@@ -90,12 +63,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	fileUrl := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
-	mD.ThumbnailURL = &fileUrl
+	metadata.ThumbnailURL = &fileUrl
 
-	err = cfg.db.UpdateVideo(mD)
+	err = cfg.db.UpdateVideo(metadata)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error updating video metadata", err)
 	}
 
-	respondWithJSON(w, http.StatusOK, mD)
+	respondWithJSON(w, http.StatusOK, metadata)
 }
